@@ -10,44 +10,75 @@
 
 ## Installation
 
-Include npy.js in your project directly, or:
-
 ```shell
 yarn add npyjs
-# npm i npyjs
 ```
 
-## Usage
+Import as a module:
 
--   Create a new npyjs object.
-
-```javascript
-let n = new npyjs();
+```js
+import npyjs from 'npyjs' 
 ```
 
--   This object can now be used load .npy files. Arrays are returned via a JavaScript callback, so usage looks like this:
+Or as a script tag:
 
-```javascript
-n.load("my-array.npy", (array, shape) => {
-    // `array` is a one-dimensional array of the raw data
-    // `shape` is a one-dimensional array that holds a numpy-style shape.
-    console.log(
-        `You loaded an array with ${array.length} elements and ${shape.length} dimensions.`
-    );
-});
+```html
+<script type='module'>
+  import npyjs from './npyjs.js' 
+  window.npyjs = npyjs
+</script>
 ```
 
-You can also use this library promise-style:
+## Format
 
-```javascript
-n.load("test.npy").then((res) => {
-    // res has { data, shape, dtype } members.
-});
+**npyjs.format** takes a [typed array](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Typed_arrays) of data and an array with the dimensions of the data and returns a [npy file](https://numpy.org/devdocs/reference/generated/numpy.lib.format.html).
+
+```js
+import fs from 'fs'
+
+const typedArray = new Int8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+const out = npyjs.format(typedArray, [5, 2])
+
+fs.writeFileSync('ints.npy', out)
 ```
 
-Unless otherwise specified, all code inside of this repository is covered under the license in [LICENSE](LICENSE).
+## Parse 
+
+**npyjs.format** a npy file and returns an object with the following properties: 
+- `data`: a typed array of data
+- `shape`: an array with the shape of the data
+- `dtype`: a string with type of data
+
+You can load the file from disk:
+
+```js
+import fs from 'fs'
+
+fs.readFile('ints.npy', (err, res) => {
+  const ints = npyjs.parse(res)
+  console.log(ints)
+  // {
+  //   data: Int8Array(10) [
+  //     0, 1, 2, 3, 4,
+  //     5, 6, 7, 8, 9
+  //   ],
+  //   shape: [ 5, 2 ]
+  //   dtype: 'int8',
+  // }
+})
+```
+
+or with fetch:
+
+```js
+const {data, shape} = npyjs.parse(await(await fetch('ints.npy')).arrayBuffer())
+```
+
+## Contribute
 
 Please report bugs or contribute pull-requests on [GitHub](https://github.com/aplbrain/npyjs).
+
+Unless otherwise specified, all code inside of this repository is covered under the license in [LICENSE](LICENSE).
 
 ---
 

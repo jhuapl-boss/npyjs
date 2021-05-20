@@ -1,129 +1,106 @@
-const fetch = this.fetch ? this.fetch : require("node-fetch");
+const dtypes = {
+  '<u1': {
+    name: 'uint8',
+    size: 8,
+    arrayConstructor: Uint8Array,
+  },
+  '|u1': {
+    name: 'uint8',
+    size: 8,
+    arrayConstructor: Uint8Array,
+  },
+  '<u2': {
+    name: 'uint16',
+    size: 16,
+    arrayConstructor: Uint16Array,
+  },
+  '|i1': {
+    name: 'int8',
+    size: 8,
+    arrayConstructor: Int8Array,
+  },
+  '<i2': {
+    name: 'int16',
+    size: 16,
+    arrayConstructor: Int16Array,
+  },
+  '<u4': {
+    name: 'uint32',
+    size: 32,
+    arrayConstructor: Int32Array,
+  },
+  '<i4': {
+    name: 'int32',
+    size: 32,
+    arrayConstructor: Int32Array,
+  },
+  '<u8': {
+    name: 'uint64',
+    size: 64,
+    arrayConstructor: BigUint64Array,
+  },
+  '<i8': {
+    name: 'int64',
+    size: 64,
+    arrayConstructor: BigInt64Array,
+  },
+  '<f4': {
+    name: 'float32',
+    size: 32,
+    arrayConstructor: Float32Array
+  },
+  '<f8': {
+    name: 'float64',
+    size: 64,
+    arrayConstructor: Float64Array
+  },
+};
 
-class npyjs {
+function parse(buffer){
+  const buf = new Uint8Array(buffer);
+  if (buf[6] != 1) throw 'Only npy version 1 is supported';
 
-    constructor(opts) {
-        if (opts) {
-            console.error([
-                "No arguments accepted to npyjs constructor.",
-                "For usage, go to https://github.com/jhuapl-boss/npyjs."
-            ].join(" "));
-        }
+  const headerLength = buf[8] + buf[9]*256;
+  const offsetBytes = 10 + headerLength;
 
-        this.dtypes = {
-            "<u1": {
-                name: "uint8",
-                size: 8,
-                arrayConstructor: Uint8Array,
-            },
-            "|u1": {
-                name: "uint8",
-                size: 8,
-                arrayConstructor: Uint8Array,
-            },
-            "<u2": {
-                name: "uint16",
-                size: 16,
-                arrayConstructor: Uint16Array,
-            },
-            "|i1": {
-                name: "int8",
-                size: 8,
-                arrayConstructor: Int8Array,
-            },
-            "<i2": {
-                name: "int16",
-                size: 16,
-                arrayConstructor: Int16Array,
-            },
-            "<u4": {
-                name: "uint32",
-                size: 32,
-                arrayConstructor: Int32Array,
-            },
-            "<i4": {
-                name: "int32",
-                size: 32,
-                arrayConstructor: Int32Array,
-            },
-            "<u8": {
-                name: "uint64",
-                size: 64,
-                arrayConstructor: BigUint64Array,
-            },
-            "<i8": {
-                name: "int64",
-                size: 64,
-                arrayConstructor: BigInt64Array,
-            },
-            "<f4": {
-                name: "float32",
-                size: 32,
-                arrayConstructor: Float32Array
-            },
-            "<f8": {
-                name: "float64",
-                size: 64,
-                arrayConstructor: Float64Array
-            },
-        };
-    }
+  const header = JSON.parse(
+    new TextDecoder('utf-8')
+      .decode(buf.slice(10, 10 + headerLength))
+      .replace(/'/g, '"')
+      .replace('False', 'false')
+      .replace('(', '[')
+      .replace(/,*\),*/g, ']')
+  );
 
-    parse(arrayBufferContents) {
+  if (header.fortan_order) throw 'Fortran-contiguous array data are not supported';
+  const dtype = dtypes[header.descr];
 
-        // const version = arrayBufferContents.slice(6, 8); // Uint8-encoded
-        const headerLength = new DataView(arrayBufferContents.slice(8, 10)).getUint8(0);
-        const offsetBytes = 10 + headerLength;
-
-        let hcontents = new TextDecoder("utf-8").decode(
-            new Uint8Array(arrayBufferContents.slice(10, 10 + headerLength))
-        );
-        var header = JSON.parse(
-            hcontents
-                .replace(/'/g, '"')
-                .replace("False", "false")
-                .replace("(", "[")
-                .replace(/,*\),*/g, "]")
-        );
-        var shape = header.shape;
-
-        let dtype = this.dtypes[header.descr];
-
-        let nums = new dtype["arrayConstructor"](
-            arrayBufferContents,
-            offsetBytes
-        );
-
-        return {
-            dtype: dtype.name,
-            data: nums,
-            shape
-        };
-    }
-
-    async load(filename, callback) {
-        /*
-        Loads an array from a stream of bytes.
-        */
-        let self = this;
-        return fetch(filename).then(fh => {
-            if (fh.ok) {
-                return fh.blob().then(i => {
-                    var content = i;
-                    var reader = new FileReader();
-                    reader.addEventListener("loadend", function () {
-                        var text = reader.result;
-                        var res = self.parse(text);
-                        if (callback) {
-                            return callback(res);
-                        }
-                        return res;
-                    });
-                    reader.readAsArrayBuffer(content);
-                }).catch(err => console.error(err));
-            }
-        }).catch(err => console.error(err));
-    }
+  return {
+    data: new dtype['arrayConstructor'](buf.slice(offsetBytes).buffer),
+    shape: header.shape,
+    dtype: dtype.name,
+  };
 }
 
-module.exports = npyjs;
+function format(typedArray, shape){
+  let dtype = null;
+  for (let d in dtypes){
+    if (dtypes[d].arrayConstructor == typedArray.constructor) dtype = d;
+  }
+  if (dtype === null) throw 'Invalid typedArray';
+
+  const header = `{'descr': '${dtype}', 'fortran_order': False, 'shape': (${shape.join(',')},), }\n`;
+  const spacepad = Array.from({length: 64 - (8 + header.length) % 64}, d => '\x20').join('');
+
+  const hl = (header + spacepad).length;
+
+  return Buffer.concat([
+    Buffer.from('\x93NUMPY\x01\x00', 'latin1'),
+    // convert to little-endian
+    Buffer.from(new Uint8Array([hl % 256, hl/256 | 0])),
+    Buffer.from(header + spacepad, 'latin1'),
+    Buffer.from(typedArray.buffer)
+  ]);
+}
+
+export default {parse, format};
